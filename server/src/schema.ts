@@ -1,23 +1,24 @@
 import { z } from 'zod';
 
-// User roles enum
+// Enum schemas
 export const userRoleSchema = z.enum(['customer', 'restaurant_owner', 'admin']);
-export type UserRole = z.infer<typeof userRoleSchema>;
-
-// Order status enum
-export const orderStatusSchema = z.enum(['pending', 'accepted', 'preparing', 'ready', 'delivered', 'cancelled']);
-export type OrderStatus = z.infer<typeof orderStatusSchema>;
-
-// Payment status enum
+export const orderStatusSchema = z.enum([
+  'created',
+  'confirmed', 
+  'preparing',
+  'out_for_delivery',
+  'delivered',
+  'canceled'
+]);
 export const paymentStatusSchema = z.enum(['pending', 'completed', 'failed', 'refunded']);
-export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 
-// User schema
+// User schemas
 export const userSchema = z.object({
   id: z.number(),
   email: z.string().email(),
   password_hash: z.string(),
-  name: z.string(),
+  first_name: z.string(),
+  last_name: z.string(),
   phone: z.string().nullable(),
   role: userRoleSchema,
   created_at: z.coerce.date(),
@@ -26,7 +27,52 @@ export const userSchema = z.object({
 
 export type User = z.infer<typeof userSchema>;
 
-// Restaurant schema
+export const createUserInputSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  first_name: z.string(),
+  last_name: z.string(),
+  phone: z.string().nullable(),
+  role: userRoleSchema
+});
+
+export type CreateUserInput = z.infer<typeof createUserInputSchema>;
+
+export const loginInputSchema = z.object({
+  email: z.string().email(),
+  password: z.string()
+});
+
+export type LoginInput = z.infer<typeof loginInputSchema>;
+
+// Address schemas
+export const addressSchema = z.object({
+  id: z.number(),
+  user_id: z.number(),
+  street_address: z.string(),
+  city: z.string(),
+  state: z.string(),
+  postal_code: z.string(),
+  country: z.string(),
+  is_default: z.boolean(),
+  created_at: z.coerce.date()
+});
+
+export type Address = z.infer<typeof addressSchema>;
+
+export const createAddressInputSchema = z.object({
+  user_id: z.number(),
+  street_address: z.string(),
+  city: z.string(),
+  state: z.string(),
+  postal_code: z.string(),
+  country: z.string(),
+  is_default: z.boolean().optional()
+});
+
+export type CreateAddressInput = z.infer<typeof createAddressInputSchema>;
+
+// Restaurant schemas
 export const restaurantSchema = z.object({
   id: z.number(),
   owner_id: z.number(),
@@ -34,86 +80,252 @@ export const restaurantSchema = z.object({
   description: z.string().nullable(),
   address: z.string(),
   phone: z.string(),
-  image_url: z.string().nullable(),
+  email: z.string().email().nullable(),
+  opening_hours: z.string().nullable(),
   is_active: z.boolean(),
+  rating: z.number().nullable(),
+  total_reviews: z.number(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
 });
 
 export type Restaurant = z.infer<typeof restaurantSchema>;
 
-// Menu item schema
-export const menuItemSchema = z.object({
+export const createRestaurantInputSchema = z.object({
+  owner_id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  address: z.string(),
+  phone: z.string(),
+  email: z.string().email().nullable(),
+  opening_hours: z.string().nullable(),
+  is_active: z.boolean().optional()
+});
+
+export type CreateRestaurantInput = z.infer<typeof createRestaurantInputSchema>;
+
+export const updateRestaurantInputSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().email().nullable().optional(),
+  opening_hours: z.string().nullable().optional(),
+  is_active: z.boolean().optional()
+});
+
+export type UpdateRestaurantInput = z.infer<typeof updateRestaurantInputSchema>;
+
+// Menu category schemas
+export const menuCategorySchema = z.object({
   id: z.number(),
   restaurant_id: z.number(),
   name: z.string(),
   description: z.string().nullable(),
-  price: z.number().positive(),
+  sort_order: z.number().int(),
+  is_active: z.boolean(),
+  created_at: z.coerce.date()
+});
+
+export type MenuCategory = z.infer<typeof menuCategorySchema>;
+
+export const createMenuCategoryInputSchema = z.object({
+  restaurant_id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  sort_order: z.number().int().optional(),
+  is_active: z.boolean().optional()
+});
+
+export type CreateMenuCategoryInput = z.infer<typeof createMenuCategoryInputSchema>;
+
+// Menu item schemas
+export const menuItemSchema = z.object({
+  id: z.number(),
+  restaurant_id: z.number(),
+  category_id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  price: z.number(),
   image_url: z.string().nullable(),
   is_available: z.boolean(),
-  category: z.string().nullable(),
+  sort_order: z.number().int(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
 });
 
 export type MenuItem = z.infer<typeof menuItemSchema>;
 
-// Cart schema
-export const cartSchema = z.object({
+export const createMenuItemInputSchema = z.object({
+  restaurant_id: z.number(),
+  category_id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  price: z.number().positive(),
+  image_url: z.string().nullable(),
+  is_available: z.boolean().optional(),
+  sort_order: z.number().int().optional()
+});
+
+export type CreateMenuItemInput = z.infer<typeof createMenuItemInputSchema>;
+
+export const updateMenuItemInputSchema = z.object({
+  id: z.number(),
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  price: z.number().positive().optional(),
+  image_url: z.string().nullable().optional(),
+  is_available: z.boolean().optional(),
+  sort_order: z.number().int().optional()
+});
+
+export type UpdateMenuItemInput = z.infer<typeof updateMenuItemInputSchema>;
+
+// Menu item option schemas
+export const menuItemOptionSchema = z.object({
+  id: z.number(),
+  menu_item_id: z.number(),
+  name: z.string(),
+  price_modifier: z.number(),
+  is_required: z.boolean(),
+  sort_order: z.number().int(),
+  created_at: z.coerce.date()
+});
+
+export type MenuItemOption = z.infer<typeof menuItemOptionSchema>;
+
+export const createMenuItemOptionInputSchema = z.object({
+  menu_item_id: z.number(),
+  name: z.string(),
+  price_modifier: z.number(),
+  is_required: z.boolean().optional(),
+  sort_order: z.number().int().optional()
+});
+
+export type CreateMenuItemOptionInput = z.infer<typeof createMenuItemOptionInputSchema>;
+
+// Cart schemas
+export const cartItemSchema = z.object({
   id: z.number(),
   user_id: z.number(),
-  restaurant_id: z.number(),
+  menu_item_id: z.number(),
+  quantity: z.number().int().positive(),
+  selected_options: z.array(z.number()).nullable(),
+  total_price: z.number(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
 });
 
-export type Cart = z.infer<typeof cartSchema>;
-
-// Cart item schema
-export const cartItemSchema = z.object({
-  id: z.number(),
-  cart_id: z.number(),
-  menu_item_id: z.number(),
-  quantity: z.number().int().positive(),
-  created_at: z.coerce.date()
-});
-
 export type CartItem = z.infer<typeof cartItemSchema>;
 
-// Order schema
+export const addToCartInputSchema = z.object({
+  user_id: z.number(),
+  menu_item_id: z.number(),
+  quantity: z.number().int().positive(),
+  selected_options: z.array(z.number()).optional()
+});
+
+export type AddToCartInput = z.infer<typeof addToCartInputSchema>;
+
+export const updateCartItemInputSchema = z.object({
+  id: z.number(),
+  quantity: z.number().int().positive(),
+  selected_options: z.array(z.number()).optional()
+});
+
+export type UpdateCartItemInput = z.infer<typeof updateCartItemInputSchema>;
+
+// Order schemas
 export const orderSchema = z.object({
   id: z.number(),
   user_id: z.number(),
   restaurant_id: z.number(),
-  total_amount: z.number().positive(),
+  delivery_address_id: z.number(),
   status: orderStatusSchema,
-  delivery_address: z.string(),
-  phone: z.string(),
+  subtotal: z.number(),
+  delivery_fee: z.number(),
+  tax_amount: z.number(),
+  total_amount: z.number(),
+  payment_status: paymentStatusSchema,
+  notes: z.string().nullable(),
+  estimated_delivery_time: z.coerce.date().nullable(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
 });
 
 export type Order = z.infer<typeof orderSchema>;
 
-// Order item schema
+export const createOrderInputSchema = z.object({
+  user_id: z.number(),
+  restaurant_id: z.number(),
+  delivery_address_id: z.number(),
+  notes: z.string().nullable().optional()
+});
+
+export type CreateOrderInput = z.infer<typeof createOrderInputSchema>;
+
+export const updateOrderStatusInputSchema = z.object({
+  id: z.number(),
+  status: orderStatusSchema,
+  estimated_delivery_time: z.coerce.date().optional()
+});
+
+export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusInputSchema>;
+
+// Order item schemas
 export const orderItemSchema = z.object({
   id: z.number(),
   order_id: z.number(),
   menu_item_id: z.number(),
   quantity: z.number().int().positive(),
-  price_at_time: z.number().positive(),
+  unit_price: z.number(),
+  selected_options: z.array(z.number()).nullable(),
+  total_price: z.number(),
   created_at: z.coerce.date()
 });
 
 export type OrderItem = z.infer<typeof orderItemSchema>;
 
-// Payment schema
+// Review schemas
+export const reviewSchema = z.object({
+  id: z.number(),
+  user_id: z.number(),
+  restaurant_id: z.number(),
+  order_id: z.number().nullable(),
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().nullable(),
+  is_approved: z.boolean(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date()
+});
+
+export type Review = z.infer<typeof reviewSchema>;
+
+export const createReviewInputSchema = z.object({
+  user_id: z.number(),
+  restaurant_id: z.number(),
+  order_id: z.number().nullable().optional(),
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().nullable().optional()
+});
+
+export type CreateReviewInput = z.infer<typeof createReviewInputSchema>;
+
+export const moderateReviewInputSchema = z.object({
+  id: z.number(),
+  is_approved: z.boolean()
+});
+
+export type ModerateReviewInput = z.infer<typeof moderateReviewInputSchema>;
+
+// Payment schemas
 export const paymentSchema = z.object({
   id: z.number(),
   order_id: z.number(),
-  amount: z.number().positive(),
-  status: paymentStatusSchema,
+  amount: z.number(),
   payment_method: z.string(),
+  payment_status: paymentStatusSchema,
   transaction_id: z.string().nullable(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
@@ -121,117 +333,10 @@ export const paymentSchema = z.object({
 
 export type Payment = z.infer<typeof paymentSchema>;
 
-// Input schemas for creating records
-
-// User registration schema
-export const createUserInputSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  name: z.string().min(1),
-  phone: z.string().nullable(),
-  role: userRoleSchema
-});
-
-export type CreateUserInput = z.infer<typeof createUserInputSchema>;
-
-// User login schema
-export const loginUserInputSchema = z.object({
-  email: z.string().email(),
-  password: z.string()
-});
-
-export type LoginUserInput = z.infer<typeof loginUserInputSchema>;
-
-// Create restaurant schema
-export const createRestaurantInputSchema = z.object({
-  owner_id: z.number(),
-  name: z.string().min(1),
-  description: z.string().nullable(),
-  address: z.string().min(1),
-  phone: z.string().min(1),
-  image_url: z.string().nullable()
-});
-
-export type CreateRestaurantInput = z.infer<typeof createRestaurantInputSchema>;
-
-// Create menu item schema
-export const createMenuItemInputSchema = z.object({
-  restaurant_id: z.number(),
-  name: z.string().min(1),
-  description: z.string().nullable(),
-  price: z.number().positive(),
-  image_url: z.string().nullable(),
-  category: z.string().nullable()
-});
-
-export type CreateMenuItemInput = z.infer<typeof createMenuItemInputSchema>;
-
-// Add to cart schema
-export const addToCartInputSchema = z.object({
-  user_id: z.number(),
-  restaurant_id: z.number(),
-  menu_item_id: z.number(),
-  quantity: z.number().int().positive()
-});
-
-export type AddToCartInput = z.infer<typeof addToCartInputSchema>;
-
-// Create order schema
-export const createOrderInputSchema = z.object({
-  user_id: z.number(),
-  restaurant_id: z.number(),
-  cart_id: z.number(),
-  delivery_address: z.string().min(1),
-  phone: z.string().min(1)
-});
-
-export type CreateOrderInput = z.infer<typeof createOrderInputSchema>;
-
-// Update order status schema
-export const updateOrderStatusInputSchema = z.object({
-  order_id: z.number(),
-  status: orderStatusSchema
-});
-
-export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusInputSchema>;
-
-// Create payment schema
 export const createPaymentInputSchema = z.object({
   order_id: z.number(),
-  payment_method: z.string().min(1)
+  amount: z.number().positive(),
+  payment_method: z.string()
 });
 
 export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
-
-// Query schemas
-export const getRestaurantsInputSchema = z.object({
-  search: z.string().optional(),
-  limit: z.number().int().positive().optional(),
-  offset: z.number().int().nonnegative().optional()
-});
-
-export type GetRestaurantsInput = z.infer<typeof getRestaurantsInputSchema>;
-
-export const getMenuItemsInputSchema = z.object({
-  restaurant_id: z.number(),
-  category: z.string().optional()
-});
-
-export type GetMenuItemsInput = z.infer<typeof getMenuItemsInputSchema>;
-
-export const getUserOrdersInputSchema = z.object({
-  user_id: z.number(),
-  limit: z.number().int().positive().optional(),
-  offset: z.number().int().nonnegative().optional()
-});
-
-export type GetUserOrdersInput = z.infer<typeof getUserOrdersInputSchema>;
-
-export const getRestaurantOrdersInputSchema = z.object({
-  restaurant_id: z.number(),
-  status: orderStatusSchema.optional(),
-  limit: z.number().int().positive().optional(),
-  offset: z.number().int().nonnegative().optional()
-});
-
-export type GetRestaurantOrdersInput = z.infer<typeof getRestaurantOrdersInputSchema>;

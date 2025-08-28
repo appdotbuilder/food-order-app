@@ -1,102 +1,109 @@
-import { type User, type Restaurant, type Order } from '../schema';
+import { db } from '../db';
+import { usersTable, restaurantsTable, ordersTable, reviewsTable } from '../db/schema';
+import { type User } from '../schema';
+import { eq, count } from 'drizzle-orm';
 
 export async function getAllUsers(): Promise<User[]> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to fetch all users from the database for admin management.
-  // This should only be accessible by admin users.
-  return Promise.resolve([
-    {
-      id: 1,
-      email: 'customer@example.com',
-      password_hash: 'hashed_password_placeholder',
-      name: 'John Customer',
-      phone: '+91-9876543210',
-      role: 'customer' as const,
-      created_at: new Date(),
-      updated_at: new Date()
-    },
-    {
-      id: 2,
-      email: 'owner@example.com',
-      password_hash: 'hashed_password_placeholder',
-      name: 'Jane Owner',
-      phone: '+91-9876543211',
-      role: 'restaurant_owner' as const,
-      created_at: new Date(),
-      updated_at: new Date()
+  try {
+    const results = await db.select()
+      .from(usersTable)
+      .orderBy(usersTable.created_at)
+      .execute();
+
+    return results;
+  } catch (error) {
+    console.error('Failed to get all users:', error);
+    throw error;
+  }
+}
+
+export async function getUserById(userId: number): Promise<User | null> {
+  try {
+    const results = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .execute();
+
+    return results[0] || null;
+  } catch (error) {
+    console.error('Failed to get user by ID:', error);
+    throw error;
+  }
+}
+
+export async function updateUserRole(userId: number, role: 'customer' | 'restaurant_owner' | 'admin'): Promise<User> {
+  try {
+    // First check if user exists
+    const existingUser = await getUserById(userId);
+    if (!existingUser) {
+      throw new Error('User not found');
     }
-  ] as User[]);
-}
 
-export async function getAllRestaurants(): Promise<Restaurant[]> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to fetch all restaurants from the database for admin management.
-  // This includes both active and inactive restaurants.
-  return Promise.resolve([
-    {
-      id: 1,
-      owner_id: 2,
-      name: 'Admin View Restaurant',
-      description: 'Restaurant visible to admin',
-      address: '123 Admin Street',
-      phone: '+91-9876543210',
-      image_url: null,
-      is_active: true,
-      created_at: new Date(),
-      updated_at: new Date()
+    // Update the user role
+    const results = await db.update(usersTable)
+      .set({ 
+        role: role,
+        updated_at: new Date()
+      })
+      .where(eq(usersTable.id, userId))
+      .returning()
+      .execute();
+
+    if (results.length === 0) {
+      throw new Error('Failed to update user role');
     }
-  ] as Restaurant[]);
+
+    return results[0];
+  } catch (error) {
+    console.error('Failed to update user role:', error);
+    throw error;
+  }
 }
 
-export async function getAllOrders(): Promise<Order[]> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to fetch all orders from the database for admin oversight.
-  // This provides system-wide order visibility for administrative purposes.
-  return Promise.resolve([
-    {
-      id: 1,
-      user_id: 1,
-      restaurant_id: 1,
-      total_amount: 695,
-      status: 'delivered' as const,
-      delivery_address: '123 Customer Street',
-      phone: '+91-9876543210',
-      created_at: new Date(),
-      updated_at: new Date()
+export async function deleteUser(userId: number): Promise<boolean> {
+  try {
+    // Check if user exists first
+    const existingUser = await getUserById(userId);
+    if (!existingUser) {
+      return false;
     }
-  ] as Order[]);
+
+    // Delete the user (cascade will handle related records)
+    const results = await db.delete(usersTable)
+      .where(eq(usersTable.id, userId))
+      .returning()
+      .execute();
+
+    return results.length > 0;
+  } catch (error) {
+    console.error('Failed to delete user:', error);
+    throw error;
+  }
 }
 
-export async function deactivateRestaurant(restaurantId: number): Promise<Restaurant | null> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to deactivate a restaurant for admin moderation purposes.
-  return Promise.resolve({
-    id: restaurantId,
-    owner_id: 2,
-    name: 'Deactivated Restaurant',
-    description: 'This restaurant has been deactivated',
-    address: '123 Admin Street',
-    phone: '+91-9876543210',
-    image_url: null,
-    is_active: false,
-    created_at: new Date(),
-    updated_at: new Date()
-  } as Restaurant);
-}
+export async function getSystemStats(): Promise<{
+  totalUsers: number;
+  totalRestaurants: number;
+  totalOrders: number;
+  totalReviews: number;
+}> {
+  try {
+    // Get all counts in parallel for better performance
+    const [usersCount, restaurantsCount, ordersCount, reviewsCount] = await Promise.all([
+      db.select({ count: count() }).from(usersTable).execute(),
+      db.select({ count: count() }).from(restaurantsTable).execute(),
+      db.select({ count: count() }).from(ordersTable).execute(),
+      db.select({ count: count() }).from(reviewsTable).execute()
+    ]);
 
-export async function activateRestaurant(restaurantId: number): Promise<Restaurant | null> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to reactivate a restaurant after admin review.
-  return Promise.resolve({
-    id: restaurantId,
-    owner_id: 2,
-    name: 'Activated Restaurant',
-    description: 'This restaurant has been activated',
-    address: '123 Admin Street',
-    phone: '+91-9876543210',
-    image_url: null,
-    is_active: true,
-    created_at: new Date(),
-    updated_at: new Date()
-  } as Restaurant);
+    return {
+      totalUsers: usersCount[0].count,
+      totalRestaurants: restaurantsCount[0].count,
+      totalOrders: ordersCount[0].count,
+      totalReviews: reviewsCount[0].count
+    };
+  } catch (error) {
+    console.error('Failed to get system stats:', error);
+    throw error;
+  }
 }
