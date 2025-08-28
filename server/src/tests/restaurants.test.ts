@@ -1,129 +1,90 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { resetDB, createDB } from '../helpers';
 import { db } from '../db';
-import { restaurantsTable, usersTable } from '../db/schema';
-import { type CreateRestaurantInput, type UpdateRestaurantInput } from '../schema';
-import {
-  createRestaurant,
-  getAllRestaurants,
-  getRestaurantById,
-  getRestaurantsByOwner,
-  updateRestaurant,
-  deleteRestaurant
-} from '../handlers/restaurants';
+import { usersTable, restaurantsTable } from '../db/schema';
+import { type CreateRestaurantInput, type GetRestaurantsInput } from '../schema';
+import { createRestaurant, getRestaurants, getRestaurantById, getRestaurantsByOwner } from '../handlers/restaurants';
 import { eq } from 'drizzle-orm';
 
-// Test data
-const testRestaurantOwner = {
-  email: 'owner@restaurant.com',
-  password_hash: 'hashedpassword',
-  first_name: 'Restaurant',
-  last_name: 'Owner',
-  phone: '555-0123',
-  role: 'restaurant_owner' as const
-};
-
-const testCustomer = {
-  email: 'customer@test.com',
-  password_hash: 'hashedpassword',
-  first_name: 'John',
-  last_name: 'Customer',
-  phone: '555-0124',
-  role: 'customer' as const
-};
-
-const testRestaurantInput: CreateRestaurantInput = {
-  owner_id: 0, // Will be set after creating owner
-  name: 'Test Restaurant',
-  description: 'A great place to eat',
-  address: '123 Main St, City, State 12345',
-  phone: '555-0100',
-  email: 'contact@testrestaurant.com',
-  opening_hours: 'Mon-Sun: 9AM-11PM',
-  is_active: true
-};
-
-describe('Restaurant Handlers', () => {
+describe('Restaurant handlers', () => {
   beforeEach(createDB);
   afterEach(resetDB);
 
+  // Helper function to create a test user
+  const createTestUser = async (role: 'customer' | 'restaurant_owner' | 'admin' = 'restaurant_owner') => {
+    const result = await db.insert(usersTable)
+      .values({
+        email: `test-${Date.now()}@example.com`,
+        password_hash: 'hashed_password',
+        name: 'Test User',
+        phone: '+91-9876543210',
+        role
+      })
+      .returning()
+      .execute();
+
+    return result[0];
+  };
+
+  // Test input for creating restaurants
+  const testRestaurantInput: CreateRestaurantInput = {
+    owner_id: 1,
+    name: 'Test Restaurant',
+    description: 'A great place to eat',
+    address: '123 Main St',
+    phone: '+91-9876543210',
+    image_url: 'https://example.com/restaurant.jpg'
+  };
+
   describe('createRestaurant', () => {
-    it('should create a restaurant with restaurant owner', async () => {
-      // Create restaurant owner first
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+    it('should create a restaurant with valid owner', async () => {
+      // Create a restaurant owner first
+      const owner = await createTestUser('restaurant_owner');
       
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
+      const input = {
+        ...testRestaurantInput,
+        owner_id: owner.id
+      };
+
       const result = await createRestaurant(input);
 
-      // Verify restaurant fields
-      expect(result.owner_id).toEqual(ownerResult[0].id);
+      // Verify restaurant properties
       expect(result.name).toEqual('Test Restaurant');
       expect(result.description).toEqual('A great place to eat');
-      expect(result.address).toEqual('123 Main St, City, State 12345');
-      expect(result.phone).toEqual('555-0100');
-      expect(result.email).toEqual('contact@testrestaurant.com');
-      expect(result.opening_hours).toEqual('Mon-Sun: 9AM-11PM');
-      expect(result.is_active).toEqual(true);
-      expect(result.rating).toBeNull();
-      expect(result.total_reviews).toEqual(0);
+      expect(result.address).toEqual('123 Main St');
+      expect(result.phone).toEqual('+91-9876543210');
+      expect(result.image_url).toEqual('https://example.com/restaurant.jpg');
+      expect(result.owner_id).toEqual(owner.id);
+      expect(result.is_active).toBe(true);
       expect(result.id).toBeDefined();
       expect(result.created_at).toBeInstanceOf(Date);
       expect(result.updated_at).toBeInstanceOf(Date);
     });
 
-    it('should create a restaurant with admin user', async () => {
-      // Create admin user
-      const adminUser = {
-        ...testRestaurantOwner,
-        email: 'admin@test.com',
-        role: 'admin' as const
+    it('should allow admin to create restaurant', async () => {
+      const admin = await createTestUser('admin');
+      
+      const input = {
+        ...testRestaurantInput,
+        owner_id: admin.id
       };
-      
-      const ownerResult = await db.insert(usersTable)
-        .values(adminUser)
-        .returning()
-        .execute();
-      
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const result = await createRestaurant(input);
 
-      expect(result.owner_id).toEqual(ownerResult[0].id);
+      const result = await createRestaurant(input);
+      expect(result.owner_id).toEqual(admin.id);
       expect(result.name).toEqual('Test Restaurant');
     });
 
-    it('should use default is_active value when not provided', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-
-      const inputWithoutActive = {
-        owner_id: ownerResult[0].id,
-        name: 'Test Restaurant',
-        description: null,
-        address: '123 Main St',
-        phone: '555-0100',
-        email: null,
-        opening_hours: null
+    it('should save restaurant to database', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
+      const input = {
+        ...testRestaurantInput,
+        owner_id: owner.id
       };
 
-      const result = await createRestaurant(inputWithoutActive);
-      expect(result.is_active).toEqual(true);
-    });
-
-    it('should save restaurant to database', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-      
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
       const result = await createRestaurant(input);
 
-      // Verify in database
+      // Verify it was saved to database
       const restaurants = await db.select()
         .from(restaurantsTable)
         .where(eq(restaurantsTable.id, result.id))
@@ -131,377 +92,247 @@ describe('Restaurant Handlers', () => {
 
       expect(restaurants).toHaveLength(1);
       expect(restaurants[0].name).toEqual('Test Restaurant');
-      expect(restaurants[0].owner_id).toEqual(ownerResult[0].id);
-      expect(restaurants[0].is_active).toEqual(true);
+      expect(restaurants[0].owner_id).toEqual(owner.id);
+      expect(restaurants[0].is_active).toBe(true);
     });
 
-    it('should throw error when owner does not exist', async () => {
-      const input = { ...testRestaurantInput, owner_id: 999 };
+    it('should handle nullable fields correctly', async () => {
+      const owner = await createTestUser('restaurant_owner');
       
-      await expect(createRestaurant(input)).rejects.toThrow(/owner not found/i);
+      const input = {
+        owner_id: owner.id,
+        name: 'Minimal Restaurant',
+        description: null,
+        address: '456 Simple St',
+        phone: '+91-9876543210',
+        image_url: null
+      };
+
+      const result = await createRestaurant(input);
+      expect(result.description).toBeNull();
+      expect(result.image_url).toBeNull();
+      expect(result.name).toEqual('Minimal Restaurant');
     });
 
-    it('should throw error when user is not restaurant owner or admin', async () => {
-      const customerResult = await db.insert(usersTable)
-        .values(testCustomer)
-        .returning()
-        .execute();
+    it('should throw error for non-existent owner', async () => {
+      const input = {
+        ...testRestaurantInput,
+        owner_id: 999999 // Non-existent user ID
+      };
+
+      await expect(createRestaurant(input)).rejects.toThrow(/Owner not found/i);
+    });
+
+    it('should throw error for customer role owner', async () => {
+      const customer = await createTestUser('customer');
       
-      const input = { ...testRestaurantInput, owner_id: customerResult[0].id };
-      
-      await expect(createRestaurant(input)).rejects.toThrow(/must be a restaurant owner/i);
+      const input = {
+        ...testRestaurantInput,
+        owner_id: customer.id
+      };
+
+      await expect(createRestaurant(input)).rejects.toThrow(/must have restaurant_owner or admin role/i);
     });
   });
 
-  describe('getAllRestaurants', () => {
+  describe('getRestaurants', () => {
+    it('should return empty array when no restaurants exist', async () => {
+      const result = await getRestaurants();
+      expect(result).toHaveLength(0);
+    });
+
     it('should return all active restaurants', async () => {
-      // Create owner
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+      const owner = await createTestUser('restaurant_owner');
+      
+      // Create two restaurants
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Restaurant 1' });
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Restaurant 2' });
 
+      const result = await getRestaurants();
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toEqual('Restaurant 1');
+      expect(result[1].name).toEqual('Restaurant 2');
+    });
+
+    it('should filter restaurants by search term', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
+      // Create restaurants with different names
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Pizza Palace' });
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Burger Joint' });
+
+      const searchInput: GetRestaurantsInput = { search: 'pizza' };
+      const result = await getRestaurants(searchInput);
+      
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toEqual('Pizza Palace');
+    });
+
+    it('should handle case-insensitive search', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'PIZZA Palace' });
+
+      const searchInput: GetRestaurantsInput = { search: 'pizza' };
+      const result = await getRestaurants(searchInput);
+      
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toEqual('PIZZA Palace');
+    });
+
+    it('should apply pagination with limit', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
+      // Create 3 restaurants
+      for (let i = 1; i <= 3; i++) {
+        await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: `Restaurant ${i}` });
+      }
+
+      const input: GetRestaurantsInput = { limit: 2 };
+      const result = await getRestaurants(input);
+      
+      expect(result).toHaveLength(2);
+    });
+
+    it('should apply pagination with offset', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
+      // Create 3 restaurants
+      for (let i = 1; i <= 3; i++) {
+        await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: `Restaurant ${i}` });
+      }
+
+      const input: GetRestaurantsInput = { limit: 2, offset: 1 };
+      const result = await getRestaurants(input);
+      
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toEqual('Restaurant 2');
+      expect(result[1].name).toEqual('Restaurant 3');
+    });
+
+    it('should only return active restaurants', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      
       // Create active restaurant
-      const activeInput = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      await createRestaurant(activeInput);
-
-      // Create inactive restaurant
-      const inactiveInput = {
-        ...testRestaurantInput,
-        owner_id: ownerResult[0].id,
-        name: 'Inactive Restaurant',
-        is_active: false
-      };
-      await createRestaurant(inactiveInput);
-
-      const results = await getAllRestaurants();
-
-      // Should only return active restaurant
-      expect(results).toHaveLength(1);
-      expect(results[0].name).toEqual('Test Restaurant');
-      expect(results[0].is_active).toEqual(true);
-      expect(typeof results[0].rating).toEqual('object'); // null or number
-    });
-
-    it('should return empty array when no active restaurants exist', async () => {
-      const results = await getAllRestaurants();
-      expect(results).toHaveLength(0);
-    });
-
-    it('should handle numeric rating conversion correctly', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
+      const activeRestaurant = await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Active Restaurant' });
+      
+      // Manually create inactive restaurant
+      await db.insert(restaurantsTable)
+        .values({
+          owner_id: owner.id,
+          name: 'Inactive Restaurant',
+          description: 'This should not appear',
+          address: '789 Hidden St',
+          phone: '+91-9876543210',
+          is_active: false
+        })
         .execute();
 
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      await createRestaurant(input);
-
-      // Manually update rating to test conversion
-      await db.update(restaurantsTable)
-        .set({ rating: '4.50' })
-        .where(eq(restaurantsTable.owner_id, ownerResult[0].id))
-        .execute();
-
-      const results = await getAllRestaurants();
-      expect(results).toHaveLength(1);
-      expect(results[0].rating).toEqual(4.5);
-      expect(typeof results[0].rating).toEqual('number');
+      const result = await getRestaurants();
+      
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toEqual('Active Restaurant');
+      expect(result[0].is_active).toBe(true);
     });
   });
 
   describe('getRestaurantById', () => {
-    it('should return restaurant by ID', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+    it('should return restaurant when it exists', async () => {
+      const owner = await createTestUser('restaurant_owner');
+      const restaurant = await createRestaurant({ ...testRestaurantInput, owner_id: owner.id });
+
+      const result = await getRestaurantById(restaurant.id);
       
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
-
-      const result = await getRestaurantById(created.id);
-
       expect(result).not.toBeNull();
-      expect(result!.id).toEqual(created.id);
+      expect(result!.id).toEqual(restaurant.id);
       expect(result!.name).toEqual('Test Restaurant');
-      expect(result!.owner_id).toEqual(ownerResult[0].id);
+      expect(result!.owner_id).toEqual(owner.id);
     });
 
-    it('should return null when restaurant not found', async () => {
-      const result = await getRestaurantById(999);
+    it('should return null when restaurant does not exist', async () => {
+      const result = await getRestaurantById(999999);
       expect(result).toBeNull();
     });
 
-    it('should return inactive restaurant by ID', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+    it('should return inactive restaurants', async () => {
+      const owner = await createTestUser('restaurant_owner');
       
-      const input = {
-        ...testRestaurantInput,
-        owner_id: ownerResult[0].id,
-        is_active: false
-      };
-      const created = await createRestaurant(input);
-
-      const result = await getRestaurantById(created.id);
-
-      expect(result).not.toBeNull();
-      expect(result!.is_active).toEqual(false);
-    });
-  });
-
-  describe('getRestaurantsByOwner', () => {
-    it('should return restaurants for specific owner', async () => {
-      // Create two owners
-      const owner1Result = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-
-      const owner2Result = await db.insert(usersTable)
+      // Manually create inactive restaurant
+      const inactiveResult = await db.insert(restaurantsTable)
         .values({
-          ...testRestaurantOwner,
-          email: 'owner2@restaurant.com'
+          owner_id: owner.id,
+          name: 'Inactive Restaurant',
+          description: 'This is inactive',
+          address: '789 Hidden St',
+          phone: '+91-9876543210',
+          is_active: false
         })
         .returning()
         .execute();
 
-      // Create restaurants for each owner
-      const input1 = { ...testRestaurantInput, owner_id: owner1Result[0].id };
-      const input2 = {
-        ...testRestaurantInput,
-        owner_id: owner1Result[0].id,
-        name: 'Second Restaurant'
-      };
-      const input3 = {
-        ...testRestaurantInput,
-        owner_id: owner2Result[0].id,
-        name: 'Other Owner Restaurant'
-      };
-
-      await createRestaurant(input1);
-      await createRestaurant(input2);
-      await createRestaurant(input3);
-
-      const results = await getRestaurantsByOwner(owner1Result[0].id);
-
-      expect(results).toHaveLength(2);
-      expect(results.map(r => r.name)).toContain('Test Restaurant');
-      expect(results.map(r => r.name)).toContain('Second Restaurant');
-      expect(results.every(r => r.owner_id === owner1Result[0].id)).toBe(true);
-    });
-
-    it('should return empty array for owner with no restaurants', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-
-      const results = await getRestaurantsByOwner(ownerResult[0].id);
-      expect(results).toHaveLength(0);
-    });
-
-    it('should throw error when owner does not exist', async () => {
-      await expect(getRestaurantsByOwner(999)).rejects.toThrow(/owner not found/i);
-    });
-
-    it('should include both active and inactive restaurants', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-
-      const activeInput = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const inactiveInput = {
-        ...testRestaurantInput,
-        owner_id: ownerResult[0].id,
-        name: 'Inactive Restaurant',
-        is_active: false
-      };
-
-      await createRestaurant(activeInput);
-      await createRestaurant(inactiveInput);
-
-      const results = await getRestaurantsByOwner(ownerResult[0].id);
-      expect(results).toHaveLength(2);
-      expect(results.some(r => r.is_active === true)).toBe(true);
-      expect(results.some(r => r.is_active === false)).toBe(true);
+      const result = await getRestaurantById(inactiveResult[0].id);
+      
+      expect(result).not.toBeNull();
+      expect(result!.name).toEqual('Inactive Restaurant');
+      expect(result!.is_active).toBe(false);
     });
   });
 
-  describe('updateRestaurant', () => {
-    it('should update restaurant fields', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+  describe('getRestaurantsByOwner', () => {
+    it('should return empty array when owner has no restaurants', async () => {
+      const owner = await createTestUser('restaurant_owner');
       
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
-
-      const updateInput: UpdateRestaurantInput = {
-        id: created.id,
-        name: 'Updated Restaurant Name',
-        description: 'Updated description',
-        phone: '555-9999',
-        is_active: false
-      };
-
-      const result = await updateRestaurant(updateInput);
-
-      expect(result.id).toEqual(created.id);
-      expect(result.name).toEqual('Updated Restaurant Name');
-      expect(result.description).toEqual('Updated description');
-      expect(result.phone).toEqual('555-9999');
-      expect(result.is_active).toEqual(false);
-      expect(result.address).toEqual(created.address); // Unchanged
-      expect(result.updated_at).not.toEqual(created.updated_at);
+      const result = await getRestaurantsByOwner(owner.id);
+      expect(result).toHaveLength(0);
     });
 
-    it('should update only provided fields', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+    it('should return all restaurants owned by user', async () => {
+      const owner1 = await createTestUser('restaurant_owner');
+      const owner2 = await createTestUser('restaurant_owner');
       
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
+      // Create restaurants for owner1
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner1.id, name: 'Owner1 Restaurant 1' });
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner1.id, name: 'Owner1 Restaurant 2' });
+      
+      // Create restaurant for owner2
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner2.id, name: 'Owner2 Restaurant' });
 
-      const updateInput: UpdateRestaurantInput = {
-        id: created.id,
-        name: 'New Name Only'
-      };
-
-      const result = await updateRestaurant(updateInput);
-
-      expect(result.name).toEqual('New Name Only');
-      expect(result.description).toEqual(created.description); // Unchanged
-      expect(result.phone).toEqual(created.phone); // Unchanged
-      expect(result.is_active).toEqual(created.is_active); // Unchanged
+      const result = await getRestaurantsByOwner(owner1.id);
+      
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toEqual('Owner1 Restaurant 1');
+      expect(result[1].name).toEqual('Owner1 Restaurant 2');
+      expect(result.every(r => r.owner_id === owner1.id)).toBe(true);
     });
 
-    it('should handle null fields correctly', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
+    it('should return both active and inactive restaurants for owner', async () => {
+      const owner = await createTestUser('restaurant_owner');
       
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
+      // Create active restaurant
+      await createRestaurant({ ...testRestaurantInput, owner_id: owner.id, name: 'Active Restaurant' });
+      
+      // Create inactive restaurant
+      await db.insert(restaurantsTable)
+        .values({
+          owner_id: owner.id,
+          name: 'Inactive Restaurant',
+          description: 'This is inactive',
+          address: '789 Hidden St',
+          phone: '+91-9876543210',
+          is_active: false
+        })
+        .execute();
 
-      const updateInput: UpdateRestaurantInput = {
-        id: created.id,
-        description: null,
-        email: null,
-        opening_hours: null
-      };
-
-      const result = await updateRestaurant(updateInput);
-
-      expect(result.description).toBeNull();
-      expect(result.email).toBeNull();
-      expect(result.opening_hours).toBeNull();
+      const result = await getRestaurantsByOwner(owner.id);
+      
+      expect(result).toHaveLength(2);
+      expect(result.some(r => r.name === 'Active Restaurant' && r.is_active === true)).toBe(true);
+      expect(result.some(r => r.name === 'Inactive Restaurant' && r.is_active === false)).toBe(true);
     });
 
-    it('should save updates to database', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-      
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
-
-      const updateInput: UpdateRestaurantInput = {
-        id: created.id,
-        name: 'Database Updated Name'
-      };
-
-      await updateRestaurant(updateInput);
-
-      // Verify in database
-      const restaurants = await db.select()
-        .from(restaurantsTable)
-        .where(eq(restaurantsTable.id, created.id))
-        .execute();
-
-      expect(restaurants).toHaveLength(1);
-      expect(restaurants[0].name).toEqual('Database Updated Name');
-    });
-
-    it('should throw error when restaurant not found', async () => {
-      const updateInput: UpdateRestaurantInput = {
-        id: 999,
-        name: 'Non-existent Restaurant'
-      };
-
-      await expect(updateRestaurant(updateInput)).rejects.toThrow(/restaurant not found/i);
-    });
-
-    it('should return existing restaurant when no fields to update', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-      
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
-
-      const updateInput: UpdateRestaurantInput = {
-        id: created.id
-        // No fields to update
-      };
-
-      const result = await updateRestaurant(updateInput);
-
-      expect(result.id).toEqual(created.id);
-      expect(result.name).toEqual(created.name);
-      expect(result.updated_at).toEqual(created.updated_at); // Should be same
-    });
-  });
-
-  describe('deleteRestaurant', () => {
-    it('should delete restaurant successfully', async () => {
-      const ownerResult = await db.insert(usersTable)
-        .values(testRestaurantOwner)
-        .returning()
-        .execute();
-      
-      const input = { ...testRestaurantInput, owner_id: ownerResult[0].id };
-      const created = await createRestaurant(input);
-
-      const result = await deleteRestaurant(created.id);
-
-      expect(result).toBe(true);
-
-      // Verify restaurant is deleted
-      const restaurants = await db.select()
-        .from(restaurantsTable)
-        .where(eq(restaurantsTable.id, created.id))
-        .execute();
-
-      expect(restaurants).toHaveLength(0);
-    });
-
-    it('should throw error when restaurant not found', async () => {
-      await expect(deleteRestaurant(999)).rejects.toThrow(/restaurant not found/i);
-    });
-
-    it('should verify restaurant exists before deletion', async () => {
-      // This test ensures we check existence before attempting deletion
-      const nonExistentId = 999;
-      
-      await expect(deleteRestaurant(nonExistentId)).rejects.toThrow(/restaurant not found/i);
-      
-      // Verify no deletion occurred (no restaurants should exist)
-      const restaurants = await db.select()
-        .from(restaurantsTable)
-        .execute();
-
-      expect(restaurants).toHaveLength(0);
+    it('should return empty array for non-existent owner', async () => {
+      const result = await getRestaurantsByOwner(999999);
+      expect(result).toHaveLength(0);
     });
   });
 });

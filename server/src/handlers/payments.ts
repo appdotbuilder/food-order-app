@@ -3,25 +3,69 @@ import { paymentsTable, ordersTable } from '../db/schema';
 import { type CreatePaymentInput, type Payment } from '../schema';
 import { eq } from 'drizzle-orm';
 
+// Mock payment gateway simulation
+const mockPaymentGateway = {
+  async processPayment(paymentMethod: string, amount: number): Promise<{ success: boolean; transactionId?: string; error?: string }> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Simulate different outcomes based on payment method
+    if (paymentMethod === 'invalid_card') {
+      return { success: false, error: 'Invalid card details' };
+    }
+    
+    // 95% success rate for other payment methods
+    const success = Math.random() > 0.05;
+    
+    if (success) {
+      return {
+        success: true,
+        transactionId: 'TXN_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
+      };
+    } else {
+      return { success: false, error: 'Payment gateway error' };
+    }
+  },
+
+  async processRefund(transactionId: string, amount: number): Promise<{ success: boolean; refundId?: string; error?: string }> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // 98% success rate for refunds
+    const success = Math.random() > 0.02;
+    
+    if (success) {
+      return {
+        success: true,
+        refundId: 'REF_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
+      };
+    } else {
+      return { success: false, error: 'Refund processing failed' };
+    }
+  }
+};
+
 export async function createPayment(input: CreatePaymentInput): Promise<Payment> {
   try {
-    // Verify the order exists before creating payment
-    const orderExists = await db.select()
+    // First, get the order to determine the payment amount
+    const orders = await db.select()
       .from(ordersTable)
       .where(eq(ordersTable.id, input.order_id))
       .execute();
 
-    if (orderExists.length === 0) {
-      throw new Error(`Order with ID ${input.order_id} not found`);
+    if (orders.length === 0) {
+      throw new Error('Order not found');
     }
 
-    // Insert payment record
+    const order = orders[0];
+    
+    // Create payment record
     const result = await db.insert(paymentsTable)
       .values({
         order_id: input.order_id,
-        amount: input.amount.toString(),
+        amount: order.total_amount, // Use order's total amount
+        status: 'pending',
         payment_method: input.payment_method,
-        payment_status: 'pending',
         transaction_id: null
       })
       .returning()
@@ -30,7 +74,7 @@ export async function createPayment(input: CreatePaymentInput): Promise<Payment>
     const payment = result[0];
     return {
       ...payment,
-      amount: parseFloat(payment.amount)
+      amount: parseFloat(payment.amount) // Convert numeric to number
     };
   } catch (error) {
     console.error('Payment creation failed:', error);
@@ -38,40 +82,53 @@ export async function createPayment(input: CreatePaymentInput): Promise<Payment>
   }
 }
 
-export async function processPayment(paymentId: number): Promise<Payment> {
+export async function processPayment(paymentId: number): Promise<Payment | null> {
   try {
-    // Verify payment exists and is in pending status
-    const existingPayment = await db.select()
+    // Get the payment record
+    const payments = await db.select()
       .from(paymentsTable)
       .where(eq(paymentsTable.id, paymentId))
       .execute();
 
-    if (existingPayment.length === 0) {
-      throw new Error(`Payment with ID ${paymentId} not found`);
+    if (payments.length === 0) {
+      return null;
     }
 
-    if (existingPayment[0].payment_status !== 'pending') {
-      throw new Error(`Payment ${paymentId} is not in pending status`);
+    const payment = payments[0];
+    
+    // Only process payments that are pending
+    if (payment.status !== 'pending') {
+      throw new Error(`Payment is already ${payment.status}`);
     }
 
-    // Simulate payment processing - generate mock transaction ID
-    const transactionId = `mock-txn-${Date.now()}-${paymentId}`;
+    // Process with mock payment gateway
+    const gatewayResult = await mockPaymentGateway.processPayment(
+      payment.payment_method,
+      parseFloat(payment.amount)
+    );
 
-    // Update payment status to completed
-    const result = await db.update(paymentsTable)
-      .set({
-        payment_status: 'completed',
-        transaction_id: transactionId,
-        updated_at: new Date()
-      })
+    // Update payment based on gateway result
+    const updateData = gatewayResult.success 
+      ? {
+          status: 'completed' as const,
+          transaction_id: gatewayResult.transactionId || null,
+          updated_at: new Date()
+        }
+      : {
+          status: 'failed' as const,
+          updated_at: new Date()
+        };
+
+    const updatedResult = await db.update(paymentsTable)
+      .set(updateData)
       .where(eq(paymentsTable.id, paymentId))
       .returning()
       .execute();
 
-    const payment = result[0];
+    const updatedPayment = updatedResult[0];
     return {
-      ...payment,
-      amount: parseFloat(payment.amount)
+      ...updatedPayment,
+      amount: parseFloat(updatedPayment.amount) // Convert numeric to number
     };
   } catch (error) {
     console.error('Payment processing failed:', error);
@@ -79,88 +136,74 @@ export async function processPayment(paymentId: number): Promise<Payment> {
   }
 }
 
-export async function getOrderPayments(orderId: number): Promise<Payment[]> {
+export async function getPaymentByOrderId(orderId: number): Promise<Payment | null> {
   try {
-    // Verify order exists
-    const orderExists = await db.select()
-      .from(ordersTable)
-      .where(eq(ordersTable.id, orderId))
-      .execute();
-
-    if (orderExists.length === 0) {
-      throw new Error(`Order with ID ${orderId} not found`);
-    }
-
-    // Fetch all payments for the order
     const results = await db.select()
       .from(paymentsTable)
       .where(eq(paymentsTable.order_id, orderId))
       .execute();
 
-    return results.map(payment => ({
+    if (results.length === 0) {
+      return null;
+    }
+
+    const payment = results[0];
+    return {
       ...payment,
-      amount: parseFloat(payment.amount)
-    }));
+      amount: parseFloat(payment.amount) // Convert numeric to number
+    };
   } catch (error) {
-    console.error('Failed to fetch order payments:', error);
+    console.error('Payment retrieval failed:', error);
     throw error;
   }
 }
 
-export async function refundPayment(paymentId: number): Promise<Payment> {
+export async function refundPayment(paymentId: number): Promise<Payment | null> {
   try {
-    // Verify payment exists and can be refunded
-    const existingPayment = await db.select()
+    // Get the payment record
+    const payments = await db.select()
       .from(paymentsTable)
       .where(eq(paymentsTable.id, paymentId))
       .execute();
 
-    if (existingPayment.length === 0) {
-      throw new Error(`Payment with ID ${paymentId} not found`);
+    if (payments.length === 0) {
+      return null;
     }
 
-    if (existingPayment[0].payment_status !== 'completed') {
-      throw new Error(`Payment ${paymentId} cannot be refunded - status is ${existingPayment[0].payment_status}`);
+    const payment = payments[0];
+    
+    // Only refund completed payments
+    if (payment.status !== 'completed') {
+      throw new Error(`Cannot refund payment with status: ${payment.status}`);
     }
 
-    // Generate mock refund transaction ID
-    const refundTransactionId = `mock-refund-${Date.now()}-${paymentId}`;
+    // Process refund with mock payment gateway
+    const refundResult = await mockPaymentGateway.processRefund(
+      payment.transaction_id || '',
+      parseFloat(payment.amount)
+    );
+
+    if (!refundResult.success) {
+      throw new Error(`Refund failed: ${refundResult.error}`);
+    }
 
     // Update payment status to refunded
-    const result = await db.update(paymentsTable)
+    const updatedResult = await db.update(paymentsTable)
       .set({
-        payment_status: 'refunded',
-        transaction_id: refundTransactionId,
+        status: 'refunded',
         updated_at: new Date()
       })
       .where(eq(paymentsTable.id, paymentId))
       .returning()
       .execute();
 
-    const payment = result[0];
+    const updatedPayment = updatedResult[0];
     return {
-      ...payment,
-      amount: parseFloat(payment.amount)
+      ...updatedPayment,
+      amount: parseFloat(updatedPayment.amount) // Convert numeric to number
     };
   } catch (error) {
     console.error('Payment refund failed:', error);
-    throw error;
-  }
-}
-
-export async function getAllPayments(): Promise<Payment[]> {
-  try {
-    // Fetch all payments in the system
-    const results = await db.select()
-      .from(paymentsTable)
-      .execute();
-
-    return results.map(payment => ({
-      ...payment,
-      amount: parseFloat(payment.amount)
-    }));
-  } catch (error) {
-    console.error('Failed to fetch all payments:', error);
     throw error;
   }
 }

@@ -1,72 +1,52 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { resetDB, createDB } from '../helpers';
 import { db } from '../db';
-import { usersTable, restaurantsTable, menuCategoriesTable, menuItemsTable } from '../db/schema';
-import { type CreateMenuItemInput, type UpdateMenuItemInput } from '../schema';
-import {
-  createMenuItem,
-  getRestaurantMenuItems,
-  getCategoryMenuItems,
-  getMenuItemById,
-  updateMenuItem,
-  deleteMenuItem
-} from '../handlers/menu_items';
+import { menuItemsTable, restaurantsTable, usersTable } from '../db/schema';
+import { type CreateMenuItemInput, type GetMenuItemsInput } from '../schema';
+import { createMenuItem, getMenuItems, getMenuItemById, updateMenuItemAvailability } from '../handlers/menu_items';
 import { eq } from 'drizzle-orm';
 
 // Test data
 const testUser = {
   email: 'owner@test.com',
   password_hash: 'hashed_password',
-  first_name: 'Restaurant',
-  last_name: 'Owner',
-  phone: '+1234567890',
+  name: 'Restaurant Owner',
+  phone: '1234567890',
   role: 'restaurant_owner' as const
 };
 
 const testRestaurant = {
   name: 'Test Restaurant',
-  description: 'A test restaurant',
-  address: '123 Test St',
-  phone: '+1234567890',
-  email: 'restaurant@test.com',
-  opening_hours: '9AM-10PM',
-  is_active: true
-};
-
-const testCategory = {
-  name: 'Main Courses',
-  description: 'Delicious main courses',
-  sort_order: 1,
-  is_active: true
+  description: 'A great test restaurant',
+  address: '123 Test Street',
+  phone: '9876543210',
+  image_url: null
 };
 
 const testMenuItemInput: CreateMenuItemInput = {
-  restaurant_id: 0, // Will be set in tests
-  category_id: 0, // Will be set in tests
-  name: 'Margherita Pizza',
-  description: 'Classic pizza with tomato, mozzarella, and basil',
-  price: 15.99,
-  image_url: 'https://example.com/pizza.jpg',
-  is_available: true,
-  sort_order: 1
+  restaurant_id: 1, // Will be set dynamically in tests
+  name: 'Test Dish',
+  description: 'A delicious test dish',
+  price: 299.99,
+  image_url: 'https://example.com/image.jpg',
+  category: 'Main Course'
 };
 
 describe('Menu Items Handlers', () => {
-  let userId: number;
   let restaurantId: number;
-  let categoryId: number;
+  let userId: number;
 
   beforeEach(async () => {
     await createDB();
 
-    // Create test user
+    // Create prerequisite user
     const userResult = await db.insert(usersTable)
       .values(testUser)
       .returning()
       .execute();
     userId = userResult[0].id;
 
-    // Create test restaurant
+    // Create prerequisite restaurant
     const restaurantResult = await db.insert(restaurantsTable)
       .values({
         ...testRestaurant,
@@ -75,386 +55,313 @@ describe('Menu Items Handlers', () => {
       .returning()
       .execute();
     restaurantId = restaurantResult[0].id;
-
-    // Create test category
-    const categoryResult = await db.insert(menuCategoriesTable)
-      .values({
-        ...testCategory,
-        restaurant_id: restaurantId
-      })
-      .returning()
-      .execute();
-    categoryId = categoryResult[0].id;
   });
 
   afterEach(resetDB);
 
   describe('createMenuItem', () => {
-    it('should create a menu item successfully', async () => {
+    it('should create a menu item', async () => {
       const input = {
         ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId
+        restaurant_id: restaurantId
       };
 
       const result = await createMenuItem(input);
 
-      expect(result.id).toBeDefined();
-      expect(result.restaurant_id).toEqual(restaurantId);
-      expect(result.category_id).toEqual(categoryId);
-      expect(result.name).toEqual('Margherita Pizza');
+      // Verify basic fields
+      expect(result.name).toEqual('Test Dish');
       expect(result.description).toEqual(input.description);
-      expect(result.price).toEqual(15.99);
-      expect(typeof result.price).toBe('number');
-      expect(result.image_url).toEqual(input.image_url);
-      expect(result.is_available).toBe(true);
-      expect(result.sort_order).toEqual(1);
+      expect(result.price).toEqual(299.99);
+      expect(typeof result.price).toEqual('number'); // Ensure numeric conversion
+      expect(result.image_url).toEqual('https://example.com/image.jpg');
+      expect(result.category).toEqual('Main Course');
+      expect(result.restaurant_id).toEqual(restaurantId);
+      expect(result.is_available).toEqual(true);
+      expect(result.id).toBeDefined();
       expect(result.created_at).toBeInstanceOf(Date);
       expect(result.updated_at).toBeInstanceOf(Date);
-    });
-
-    it('should create menu item with optional fields', async () => {
-      const input: CreateMenuItemInput = {
-        restaurant_id: restaurantId,
-        category_id: categoryId,
-        name: 'Simple Item',
-        description: null,
-        price: 10.00,
-        image_url: null
-      };
-
-      const result = await createMenuItem(input);
-
-      expect(result.name).toEqual('Simple Item');
-      expect(result.description).toBeNull();
-      expect(result.price).toEqual(10.00);
-      expect(result.image_url).toBeNull();
-      expect(result.is_available).toBe(true); // Default value
-      expect(result.sort_order).toEqual(0); // Default value
     });
 
     it('should save menu item to database', async () => {
       const input = {
         ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId
+        restaurant_id: restaurantId
       };
 
       const result = await createMenuItem(input);
 
-      const savedItems = await db.select()
+      // Verify in database
+      const menuItems = await db.select()
         .from(menuItemsTable)
         .where(eq(menuItemsTable.id, result.id))
         .execute();
 
-      expect(savedItems).toHaveLength(1);
-      expect(savedItems[0].name).toEqual('Margherita Pizza');
-      expect(parseFloat(savedItems[0].price)).toEqual(15.99);
-      expect(savedItems[0].restaurant_id).toEqual(restaurantId);
-      expect(savedItems[0].category_id).toEqual(categoryId);
+      expect(menuItems).toHaveLength(1);
+      expect(menuItems[0].name).toEqual('Test Dish');
+      expect(parseFloat(menuItems[0].price)).toEqual(299.99);
+      expect(menuItems[0].is_available).toEqual(true);
     });
 
-    it('should throw error for non-existent restaurant', async () => {
-      const input = {
-        ...testMenuItemInput,
-        restaurant_id: 99999,
-        category_id: categoryId
-      };
-
-      await expect(createMenuItem(input)).rejects.toThrow(/restaurant not found/i);
-    });
-
-    it('should throw error for non-existent category', async () => {
-      const input = {
-        ...testMenuItemInput,
+    it('should create menu item with minimal data', async () => {
+      const minimalInput: CreateMenuItemInput = {
         restaurant_id: restaurantId,
-        category_id: 99999
+        name: 'Simple Dish',
+        description: null,
+        price: 199,
+        image_url: null,
+        category: null
       };
 
-      await expect(createMenuItem(input)).rejects.toThrow(/category not found/i);
+      const result = await createMenuItem(minimalInput);
+
+      expect(result.name).toEqual('Simple Dish');
+      expect(result.description).toBeNull();
+      expect(result.price).toEqual(199);
+      expect(result.image_url).toBeNull();
+      expect(result.category).toBeNull();
+      expect(result.is_available).toEqual(true);
     });
 
-    it('should throw error for category not belonging to restaurant', async () => {
-      // Create another restaurant and category
-      const anotherUserResult = await db.insert(usersTable)
-        .values({
-          ...testUser,
-          email: 'another@test.com'
-        })
-        .returning()
-        .execute();
-
-      const anotherRestaurantResult = await db.insert(restaurantsTable)
-        .values({
-          ...testRestaurant,
-          name: 'Another Restaurant',
-          owner_id: anotherUserResult[0].id
-        })
-        .returning()
-        .execute();
-
-      const anotherCategoryResult = await db.insert(menuCategoriesTable)
-        .values({
-          ...testCategory,
-          restaurant_id: anotherRestaurantResult[0].id
-        })
-        .returning()
-        .execute();
-
+    it('should throw error when restaurant does not exist', async () => {
       const input = {
         ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: anotherCategoryResult[0].id
+        restaurant_id: 99999 // Non-existent restaurant
       };
 
-      await expect(createMenuItem(input)).rejects.toThrow(/category not found or does not belong/i);
+      await expect(createMenuItem(input)).rejects.toThrow(/Restaurant with id 99999 not found/i);
     });
   });
 
-  describe('getRestaurantMenuItems', () => {
-    it('should fetch all menu items for a restaurant', async () => {
-      // Create multiple menu items
-      const item1Input = {
-        ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId,
-        name: 'Pizza'
+  describe('getMenuItems', () => {
+    let menuItem1Id: number;
+    let menuItem2Id: number;
+    let menuItem3Id: number;
+
+    beforeEach(async () => {
+      // Create test menu items
+      const item1 = await db.insert(menuItemsTable)
+        .values({
+          restaurant_id: restaurantId,
+          name: 'Pasta',
+          description: 'Italian pasta',
+          price: '149.50',
+          category: 'Main Course',
+          is_available: true
+        })
+        .returning()
+        .execute();
+      menuItem1Id = item1[0].id;
+
+      const item2 = await db.insert(menuItemsTable)
+        .values({
+          restaurant_id: restaurantId,
+          name: 'Garlic Bread',
+          description: 'Crispy bread with garlic',
+          price: '79.00',
+          category: 'Appetizer',
+          is_available: true
+        })
+        .returning()
+        .execute();
+      menuItem2Id = item2[0].id;
+
+      // Create unavailable item (should not be returned)
+      const item3 = await db.insert(menuItemsTable)
+        .values({
+          restaurant_id: restaurantId,
+          name: 'Out of Stock Item',
+          description: 'Currently unavailable',
+          price: '299.00',
+          category: 'Main Course',
+          is_available: false
+        })
+        .returning()
+        .execute();
+      menuItem3Id = item3[0].id;
+    });
+
+    it('should get all available menu items for restaurant', async () => {
+      const input: GetMenuItemsInput = {
+        restaurant_id: restaurantId
       };
 
-      const item2Input = {
-        ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId,
-        name: 'Pasta',
-        price: 12.50
-      };
+      const results = await getMenuItems(input);
 
-      await createMenuItem(item1Input);
-      await createMenuItem(item2Input);
+      expect(results).toHaveLength(2); // Only available items
+      expect(results.map(item => item.name)).toContain('Pasta');
+      expect(results.map(item => item.name)).toContain('Garlic Bread');
+      expect(results.map(item => item.name)).not.toContain('Out of Stock Item');
 
-      const result = await getRestaurantMenuItems(restaurantId);
-
-      expect(result).toHaveLength(2);
-      expect(result[0].restaurant_id).toEqual(restaurantId);
-      expect(result[1].restaurant_id).toEqual(restaurantId);
-      expect(result.find(item => item.name === 'Pizza')).toBeDefined();
-      expect(result.find(item => item.name === 'Pasta')).toBeDefined();
-      
       // Verify numeric conversion
-      result.forEach(item => {
-        expect(typeof item.price).toBe('number');
+      results.forEach(item => {
+        expect(typeof item.price).toEqual('number');
+        expect(item.is_available).toEqual(true);
       });
     });
 
-    it('should return empty array for restaurant with no menu items', async () => {
-      const result = await getRestaurantMenuItems(restaurantId);
-      expect(result).toHaveLength(0);
-    });
-
-    it('should throw error for non-existent restaurant', async () => {
-      await expect(getRestaurantMenuItems(99999)).rejects.toThrow(/restaurant not found/i);
-    });
-  });
-
-  describe('getCategoryMenuItems', () => {
-    it('should fetch all menu items in a category', async () => {
-      // Create another category
-      const category2Result = await db.insert(menuCategoriesTable)
-        .values({
-          ...testCategory,
-          name: 'Desserts',
-          restaurant_id: restaurantId
-        })
-        .returning()
-        .execute();
-
-      const category2Id = category2Result[0].id;
-
-      // Create items in different categories
-      await createMenuItem({
-        ...testMenuItemInput,
+    it('should filter menu items by category', async () => {
+      const input: GetMenuItemsInput = {
         restaurant_id: restaurantId,
-        category_id: categoryId,
-        name: 'Main Course Item'
-      });
+        category: 'Main Course'
+      };
 
-      await createMenuItem({
-        ...testMenuItemInput,
+      const results = await getMenuItems(input);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toEqual('Pasta');
+      expect(results[0].category).toEqual('Main Course');
+      expect(results[0].price).toEqual(149.5);
+    });
+
+    it('should return empty array for non-existent restaurant', async () => {
+      const input: GetMenuItemsInput = {
+        restaurant_id: 99999
+      };
+
+      const results = await getMenuItems(input);
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('should return empty array for non-existent category', async () => {
+      const input: GetMenuItemsInput = {
         restaurant_id: restaurantId,
-        category_id: category2Id,
-        name: 'Dessert Item',
-        price: 8.99
-      });
+        category: 'Non-Existent Category'
+      };
 
-      const result = await getCategoryMenuItems(categoryId);
+      const results = await getMenuItems(input);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].category_id).toEqual(categoryId);
-      expect(result[0].name).toEqual('Main Course Item');
-      expect(typeof result[0].price).toBe('number');
-    });
-
-    it('should return empty array for category with no menu items', async () => {
-      const result = await getCategoryMenuItems(categoryId);
-      expect(result).toHaveLength(0);
-    });
-
-    it('should throw error for non-existent category', async () => {
-      await expect(getCategoryMenuItems(99999)).rejects.toThrow(/category not found/i);
+      expect(results).toHaveLength(0);
     });
   });
 
   describe('getMenuItemById', () => {
-    it('should fetch menu item by ID', async () => {
-      const input = {
-        ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId
-      };
+    let menuItemId: number;
 
-      const created = await createMenuItem(input);
-      const result = await getMenuItemById(created.id);
+    beforeEach(async () => {
+      const result = await db.insert(menuItemsTable)
+        .values({
+          restaurant_id: restaurantId,
+          name: 'Specific Item',
+          description: 'A specific menu item',
+          price: '199.99',
+          category: 'Dessert',
+          is_available: true
+        })
+        .returning()
+        .execute();
+      menuItemId = result[0].id;
+    });
 
-      expect(result).toBeDefined();
-      expect(result!.id).toEqual(created.id);
-      expect(result!.name).toEqual('Margherita Pizza');
-      expect(result!.price).toEqual(15.99);
-      expect(typeof result!.price).toBe('number');
+    it('should get menu item by id', async () => {
+      const result = await getMenuItemById(menuItemId);
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toEqual(menuItemId);
+      expect(result!.name).toEqual('Specific Item');
+      expect(result!.description).toEqual('A specific menu item');
+      expect(result!.price).toEqual(199.99);
+      expect(typeof result!.price).toEqual('number');
+      expect(result!.category).toEqual('Dessert');
+      expect(result!.is_available).toEqual(true);
     });
 
     it('should return null for non-existent menu item', async () => {
       const result = await getMenuItemById(99999);
+
       expect(result).toBeNull();
     });
+
+    it('should return menu item even if unavailable', async () => {
+      // Update item to unavailable
+      await db.update(menuItemsTable)
+        .set({ is_available: false })
+        .where(eq(menuItemsTable.id, menuItemId))
+        .execute();
+
+      const result = await getMenuItemById(menuItemId);
+
+      expect(result).not.toBeNull();
+      expect(result!.is_available).toEqual(false);
+    });
   });
 
-  describe('updateMenuItem', () => {
+  describe('updateMenuItemAvailability', () => {
     let menuItemId: number;
 
     beforeEach(async () => {
-      const input = {
-        ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId
-      };
-
-      const created = await createMenuItem(input);
-      menuItemId = created.id;
+      const result = await db.insert(menuItemsTable)
+        .values({
+          restaurant_id: restaurantId,
+          name: 'Update Test Item',
+          description: 'Item for update testing',
+          price: '149.00',
+          category: 'Test',
+          is_available: true
+        })
+        .returning()
+        .execute();
+      menuItemId = result[0].id;
     });
 
-    it('should update menu item successfully', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: menuItemId,
-        name: 'Updated Pizza Name',
-        price: 18.99,
-        is_available: false
-      };
+    it('should update menu item availability to false', async () => {
+      const result = await updateMenuItemAvailability(menuItemId, false);
 
-      const result = await updateMenuItem(updateInput);
+      expect(result).not.toBeNull();
+      expect(result!.is_available).toEqual(false);
+      expect(result!.updated_at).toBeInstanceOf(Date);
 
-      expect(result.id).toEqual(menuItemId);
-      expect(result.name).toEqual('Updated Pizza Name');
-      expect(result.price).toEqual(18.99);
-      expect(typeof result.price).toBe('number');
-      expect(result.is_available).toBe(false);
-      expect(result.description).toEqual(testMenuItemInput.description); // Unchanged
-    });
-
-    it('should update only provided fields', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: menuItemId,
-        price: 20.00
-      };
-
-      const result = await updateMenuItem(updateInput);
-
-      expect(result.price).toEqual(20.00);
-      expect(result.name).toEqual('Margherita Pizza'); // Unchanged
-      expect(result.description).toEqual(testMenuItemInput.description); // Unchanged
-    });
-
-    it('should handle null values correctly', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: menuItemId,
-        description: null,
-        image_url: null
-      };
-
-      const result = await updateMenuItem(updateInput);
-
-      expect(result.description).toBeNull();
-      expect(result.image_url).toBeNull();
-    });
-
-    it('should return unchanged item when no fields provided', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: menuItemId
-      };
-
-      const result = await updateMenuItem(updateInput);
-
-      expect(result.name).toEqual('Margherita Pizza');
-      expect(result.price).toEqual(15.99);
-      expect(typeof result.price).toBe('number');
-    });
-
-    it('should save updates to database', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: menuItemId,
-        name: 'Database Updated Name',
-        price: 25.50
-      };
-
-      await updateMenuItem(updateInput);
-
-      const saved = await db.select()
+      // Verify in database
+      const dbResult = await db.select()
         .from(menuItemsTable)
         .where(eq(menuItemsTable.id, menuItemId))
         .execute();
 
-      expect(saved[0].name).toEqual('Database Updated Name');
-      expect(parseFloat(saved[0].price)).toEqual(25.50);
+      expect(dbResult[0].is_available).toEqual(false);
     });
 
-    it('should throw error for non-existent menu item', async () => {
-      const updateInput: UpdateMenuItemInput = {
-        id: 99999,
-        name: 'Non-existent'
-      };
+    it('should update menu item availability to true', async () => {
+      // First set to false
+      await db.update(menuItemsTable)
+        .set({ is_available: false })
+        .where(eq(menuItemsTable.id, menuItemId))
+        .execute();
 
-      await expect(updateMenuItem(updateInput)).rejects.toThrow(/menu item not found/i);
-    });
-  });
+      const result = await updateMenuItemAvailability(menuItemId, true);
 
-  describe('deleteMenuItem', () => {
-    let menuItemId: number;
+      expect(result).not.toBeNull();
+      expect(result!.is_available).toEqual(true);
 
-    beforeEach(async () => {
-      const input = {
-        ...testMenuItemInput,
-        restaurant_id: restaurantId,
-        category_id: categoryId
-      };
-
-      const created = await createMenuItem(input);
-      menuItemId = created.id;
-    });
-
-    it('should delete menu item successfully', async () => {
-      const result = await deleteMenuItem(menuItemId);
-      expect(result).toBe(true);
-
-      // Verify deletion from database
-      const deleted = await db.select()
+      // Verify in database
+      const dbResult = await db.select()
         .from(menuItemsTable)
         .where(eq(menuItemsTable.id, menuItemId))
         .execute();
 
-      expect(deleted).toHaveLength(0);
+      expect(dbResult[0].is_available).toEqual(true);
     });
 
-    it('should throw error for non-existent menu item', async () => {
-      await expect(deleteMenuItem(99999)).rejects.toThrow(/menu item not found/i);
+    it('should return null for non-existent menu item', async () => {
+      const result = await updateMenuItemAvailability(99999, false);
+
+      expect(result).toBeNull();
+    });
+
+    it('should preserve all other fields when updating availability', async () => {
+      const originalData = await getMenuItemById(menuItemId);
+      
+      const result = await updateMenuItemAvailability(menuItemId, false);
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toEqual(originalData!.id);
+      expect(result!.name).toEqual(originalData!.name);
+      expect(result!.description).toEqual(originalData!.description);
+      expect(result!.price).toEqual(originalData!.price);
+      expect(result!.category).toEqual(originalData!.category);
+      expect(result!.restaurant_id).toEqual(originalData!.restaurant_id);
+      // Only availability and updated_at should change
+      expect(result!.is_available).toEqual(false);
+      expect(result!.updated_at.getTime()).toBeGreaterThan(originalData!.updated_at.getTime());
     });
   });
 });

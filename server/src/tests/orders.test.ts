@@ -3,357 +3,418 @@ import { resetDB, createDB } from '../helpers';
 import { db } from '../db';
 import { 
   usersTable, 
-  addressesTable, 
   restaurantsTable, 
-  menuCategoriesTable,
-  menuItemsTable,
-  cartItemsTable,
-  ordersTable,
-  orderItemsTable
+  menuItemsTable, 
+  cartsTable, 
+  cartItemsTable, 
+  ordersTable, 
+  orderItemsTable 
 } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { 
+  type CreateOrderInput, 
+  type UpdateOrderStatusInput,
+  type GetUserOrdersInput,
+  type GetRestaurantOrdersInput 
+} from '../schema';
 import { 
   createOrder, 
+  getOrderById, 
   getUserOrders, 
   getRestaurantOrders, 
-  getOrderById, 
-  getOrderItems, 
   updateOrderStatus, 
-  cancelOrder, 
-  getAllOrders 
+  getOrderItems 
 } from '../handlers/orders';
-import { type CreateOrderInput, type UpdateOrderStatusInput } from '../schema';
+import { eq } from 'drizzle-orm';
 
-describe('orders handlers', () => {
-  beforeEach(createDB);
-  afterEach(resetDB);
+describe('Orders Handlers', () => {
+  let userId: number;
+  let restaurantId: number;
+  let menuItemId1: number;
+  let menuItemId2: number;
+  let cartId: number;
 
-  // Test data setup
-  let testUser: any;
-  let testRestaurantOwner: any;
-  let testRestaurant: any;
-  let testAddress: any;
-  let testCategory: any;
-  let testMenuItem1: any;
-  let testMenuItem2: any;
+  beforeEach(async () => {
+    await createDB();
 
-  const setupTestData = async () => {
-    // Create test users
-    const users = await db.insert(usersTable)
-      .values([
-        {
-          email: 'customer@test.com',
-          password_hash: 'hashed_password',
-          first_name: 'John',
-          last_name: 'Doe',
-          phone: '1234567890',
-          role: 'customer'
-        },
-        {
-          email: 'owner@test.com', 
-          password_hash: 'hashed_password',
-          first_name: 'Jane',
-          last_name: 'Smith',
-          phone: '0987654321',
-          role: 'restaurant_owner'
-        }
-      ])
+    // Create test user
+    const userResult = await db.insert(usersTable)
+      .values({
+        email: 'customer@test.com',
+        password_hash: 'hashedpassword',
+        name: 'Test Customer',
+        phone: '+91-9876543210',
+        role: 'customer'
+      })
       .returning()
       .execute();
+    userId = userResult[0].id;
 
-    testUser = users[0];
-    testRestaurantOwner = users[1];
-
-    // Create test address
-    const addresses = await db.insert(addressesTable)
+    // Create restaurant owner
+    const ownerResult = await db.insert(usersTable)
       .values({
-        user_id: testUser.id,
-        street_address: '123 Main St',
-        city: 'Test City',
-        state: 'TS',
-        postal_code: '12345',
-        country: 'USA',
-        is_default: true
+        email: 'owner@test.com',
+        password_hash: 'hashedpassword',
+        name: 'Restaurant Owner',
+        phone: '+91-9876543211',
+        role: 'restaurant_owner'
       })
       .returning()
       .execute();
 
-    testAddress = addresses[0];
-
-    // Create test restaurant
-    const restaurants = await db.insert(restaurantsTable)
+    // Create restaurant
+    const restaurantResult = await db.insert(restaurantsTable)
       .values({
-        owner_id: testRestaurantOwner.id,
+        owner_id: ownerResult[0].id,
         name: 'Test Restaurant',
         description: 'A test restaurant',
-        address: '456 Restaurant Ave',
-        phone: '555-0123',
-        email: 'restaurant@test.com',
-        is_active: true
+        address: '123 Restaurant Street',
+        phone: '+91-9876543212'
       })
       .returning()
       .execute();
-
-    testRestaurant = restaurants[0];
-
-    // Create menu category
-    const categories = await db.insert(menuCategoriesTable)
-      .values({
-        restaurant_id: testRestaurant.id,
-        name: 'Main Dishes',
-        description: 'Delicious main courses',
-        sort_order: 1
-      })
-      .returning()
-      .execute();
-
-    testCategory = categories[0];
+    restaurantId = restaurantResult[0].id;
 
     // Create menu items
-    const menuItems = await db.insert(menuItemsTable)
-      .values([
-        {
-          restaurant_id: testRestaurant.id,
-          category_id: testCategory.id,
-          name: 'Burger',
-          description: 'Juicy beef burger',
-          price: '12.99',
-          is_available: true,
-          sort_order: 1
-        },
-        {
-          restaurant_id: testRestaurant.id,
-          category_id: testCategory.id,
-          name: 'Pizza',
-          description: 'Margherita pizza',
-          price: '15.99',
-          is_available: true,
-          sort_order: 2
-        }
-      ])
+    const menuItem1Result = await db.insert(menuItemsTable)
+      .values({
+        restaurant_id: restaurantId,
+        name: 'Burger',
+        description: 'Delicious burger',
+        price: '12.99',
+        category: 'Main Course'
+      })
       .returning()
       .execute();
+    menuItemId1 = menuItem1Result[0].id;
 
-    testMenuItem1 = menuItems[0];
-    testMenuItem2 = menuItems[1];
-  };
+    const menuItem2Result = await db.insert(menuItemsTable)
+      .values({
+        restaurant_id: restaurantId,
+        name: 'Fries',
+        description: 'Crispy fries',
+        price: '4.99',
+        category: 'Sides'
+      })
+      .returning()
+      .execute();
+    menuItemId2 = menuItem2Result[0].id;
 
-  const setupCartItems = async () => {
+    // Create cart
+    const cartResult = await db.insert(cartsTable)
+      .values({
+        user_id: userId,
+        restaurant_id: restaurantId
+      })
+      .returning()
+      .execute();
+    cartId = cartResult[0].id;
+
+    // Add items to cart
     await db.insert(cartItemsTable)
       .values([
         {
-          user_id: testUser.id,
-          menu_item_id: testMenuItem1.id,
-          quantity: 2,
-          selected_options: null,
-          total_price: '25.98'
+          cart_id: cartId,
+          menu_item_id: menuItemId1,
+          quantity: 2
         },
         {
-          user_id: testUser.id,
-          menu_item_id: testMenuItem2.id,
-          quantity: 1,
-          selected_options: null,
-          total_price: '15.99'
+          cart_id: cartId,
+          menu_item_id: menuItemId2,
+          quantity: 1
         }
       ])
       .execute();
-  };
+  });
+
+  afterEach(resetDB);
 
   describe('createOrder', () => {
-    it('should create an order from cart items', async () => {
-      await setupTestData();
-      await setupCartItems();
+    const testInput: CreateOrderInput = {
+      user_id: 0, // Will be set in test
+      restaurant_id: 0, // Will be set in test
+      cart_id: 0, // Will be set in test
+      delivery_address: '456 Customer Street',
+      phone: '+91-9876543210'
+    };
 
-      const input: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id,
-        notes: 'Test order notes'
+    it('should create an order from cart items', async () => {
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId
       };
 
       const result = await createOrder(input);
 
-      expect(result.user_id).toEqual(testUser.id);
-      expect(result.restaurant_id).toEqual(testRestaurant.id);
-      expect(result.delivery_address_id).toEqual(testAddress.id);
-      expect(result.status).toEqual('created');
-      expect(result.payment_status).toEqual('pending');
-      expect(result.notes).toEqual('Test order notes');
+      expect(result.user_id).toBe(userId);
+      expect(result.restaurant_id).toBe(restaurantId);
+      expect(result.delivery_address).toBe('456 Customer Street');
+      expect(result.phone).toBe('+91-9876543210');
+      expect(result.status).toBe('pending');
+      expect(result.total_amount).toBe(30.97); // (12.99 * 2) + (4.99 * 1)
       expect(result.id).toBeDefined();
       expect(result.created_at).toBeInstanceOf(Date);
+      expect(typeof result.total_amount).toBe('number');
+    });
 
-      // Verify calculations (2 * 12.99 + 1 * 15.99 = 41.97)
-      expect(result.subtotal).toEqual(41.97);
-      expect(result.delivery_fee).toEqual(3.99);
-      expect(result.tax_amount).toBeCloseTo(41.97 * 0.08, 2); // 8% tax, 2 decimal precision
-      expect(result.total_amount).toBeCloseTo(41.97 + 3.99 + (41.97 * 0.08), 2);
+    it('should create order items from cart items', async () => {
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId
+      };
 
-      // Verify order items were created
-      const orderItems = await getOrderItems(result.id);
+      const order = await createOrder(input);
+      const orderItems = await getOrderItems(order.id);
+
       expect(orderItems).toHaveLength(2);
-      expect(orderItems[0].menu_item_id).toEqual(testMenuItem1.id);
-      expect(orderItems[0].quantity).toEqual(2);
-      expect(orderItems[1].menu_item_id).toEqual(testMenuItem2.id);
-      expect(orderItems[1].quantity).toEqual(1);
+      
+      const burgerItem = orderItems.find(item => item.menu_item_id === menuItemId1);
+      const friesItem = orderItems.find(item => item.menu_item_id === menuItemId2);
 
-      // Verify cart was cleared
+      expect(burgerItem).toBeDefined();
+      expect(burgerItem!.quantity).toBe(2);
+      expect(burgerItem!.price_at_time).toBe(12.99);
+      expect(typeof burgerItem!.price_at_time).toBe('number');
+
+      expect(friesItem).toBeDefined();
+      expect(friesItem!.quantity).toBe(1);
+      expect(friesItem!.price_at_time).toBe(4.99);
+    });
+
+    it('should clear cart after order creation', async () => {
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId
+      };
+
+      await createOrder(input);
+
       const cartItems = await db.select()
         .from(cartItemsTable)
-        .where(eq(cartItemsTable.user_id, testUser.id))
+        .where(eq(cartItemsTable.cart_id, cartId))
         .execute();
+
       expect(cartItems).toHaveLength(0);
     });
 
-    it('should throw error when user not found', async () => {
-      await setupTestData();
-
-      const input: CreateOrderInput = {
-        user_id: 999,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+    it('should save order to database', async () => {
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId
       };
 
-      await expect(createOrder(input)).rejects.toThrow(/User not found/i);
+      const result = await createOrder(input);
+
+      const orders = await db.select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, result.id))
+        .execute();
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0].user_id).toBe(userId);
+      expect(parseFloat(orders[0].total_amount)).toBe(30.97);
     });
 
-    it('should throw error when restaurant not found', async () => {
-      await setupTestData();
-
-      const input: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: 999,
-        delivery_address_id: testAddress.id
+    it('should throw error when cart does not exist', async () => {
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: 99999
       };
 
-      await expect(createOrder(input)).rejects.toThrow(/Restaurant not found/i);
+      expect(createOrder(input)).rejects.toThrow(/cart not found/i);
     });
 
-    it('should throw error when no cart items exist', async () => {
-      await setupTestData();
+    it('should throw error when cart is empty', async () => {
+      // Clear cart items
+      await db.delete(cartItemsTable)
+        .where(eq(cartItemsTable.cart_id, cartId))
+        .execute();
 
-      const input: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+      const input = {
+        ...testInput,
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId
       };
 
-      await expect(createOrder(input)).rejects.toThrow(/No cart items found/i);
-    });
-  });
-
-  describe('getUserOrders', () => {
-    it('should return user orders', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      // Create an order first
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
-      };
-
-      await createOrder(orderInput);
-
-      const result = await getUserOrders(testUser.id);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].user_id).toEqual(testUser.id);
-      expect(result[0].restaurant_id).toEqual(testRestaurant.id);
-      expect(typeof result[0].subtotal).toEqual('number');
-      expect(typeof result[0].total_amount).toEqual('number');
-    });
-
-    it('should return empty array for user with no orders', async () => {
-      await setupTestData();
-
-      const result = await getUserOrders(testUser.id);
-
-      expect(result).toHaveLength(0);
-    });
-  });
-
-  describe('getRestaurantOrders', () => {
-    it('should return restaurant orders', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      // Create an order first
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
-      };
-
-      await createOrder(orderInput);
-
-      const result = await getRestaurantOrders(testRestaurant.id);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].restaurant_id).toEqual(testRestaurant.id);
-      expect(result[0].user_id).toEqual(testUser.id);
-      expect(typeof result[0].subtotal).toEqual('number');
-    });
-
-    it('should return empty array for restaurant with no orders', async () => {
-      await setupTestData();
-
-      const result = await getRestaurantOrders(testRestaurant.id);
-
-      expect(result).toHaveLength(0);
+      expect(createOrder(input)).rejects.toThrow(/cart is empty/i);
     });
   });
 
   describe('getOrderById', () => {
-    it('should return specific order', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+    it('should return order by ID', async () => {
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
       };
 
-      const createdOrder = await createOrder(orderInput);
+      const createdOrder = await createOrder(input);
       const result = await getOrderById(createdOrder.id);
 
-      expect(result).toBeDefined();
-      expect(result!.id).toEqual(createdOrder.id);
-      expect(result!.user_id).toEqual(testUser.id);
-      expect(typeof result!.subtotal).toEqual('number');
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe(createdOrder.id);
+      expect(result!.user_id).toBe(userId);
+      expect(result!.total_amount).toBe(30.97);
+      expect(typeof result!.total_amount).toBe('number');
     });
 
     it('should return null for non-existent order', async () => {
-      const result = await getOrderById(999);
-
+      const result = await getOrderById(99999);
       expect(result).toBeNull();
     });
   });
 
-  describe('getOrderItems', () => {
-    it('should return order items', async () => {
-      await setupTestData();
-      await setupCartItems();
+  describe('getUserOrders', () => {
+    it('should return orders for user', async () => {
+      // Create multiple orders
+      for (let i = 0; i < 3; i++) {
+        // Add items back to cart for each order
+        await db.insert(cartItemsTable)
+          .values({
+            cart_id: cartId,
+            menu_item_id: menuItemId1,
+            quantity: 1
+          })
+          .execute();
 
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+        await createOrder({
+          user_id: userId,
+          restaurant_id: restaurantId,
+          cart_id: cartId,
+          delivery_address: `Address ${i}`,
+          phone: '+91-9876543210'
+        });
+      }
+
+      const input: GetUserOrdersInput = {
+        user_id: userId,
+        limit: 10,
+        offset: 0
       };
 
-      const order = await createOrder(orderInput);
-      const result = await getOrderItems(order.id);
+      const result = await getUserOrders(input);
 
-      expect(result).toHaveLength(2);
-      expect(result[0].order_id).toEqual(order.id);
-      expect(result[0].quantity).toBeDefined();
-      expect(typeof result[0].unit_price).toEqual('number');
-      expect(typeof result[0].total_price).toEqual('number');
+      expect(result).toHaveLength(3);
+      result.forEach(order => {
+        expect(order.user_id).toBe(userId);
+        expect(typeof order.total_amount).toBe('number');
+      });
+
+      // Should be ordered by creation date (newest first)
+      for (let i = 0; i < result.length - 1; i++) {
+        expect(result[i].created_at >= result[i + 1].created_at).toBe(true);
+      }
     });
 
-    it('should return empty array for order with no items', async () => {
-      const result = await getOrderItems(999);
+    it('should respect pagination limits', async () => {
+      // Create 5 orders
+      for (let i = 0; i < 5; i++) {
+        await db.insert(cartItemsTable)
+          .values({
+            cart_id: cartId,
+            menu_item_id: menuItemId1,
+            quantity: 1
+          })
+          .execute();
+
+        await createOrder({
+          user_id: userId,
+          restaurant_id: restaurantId,
+          cart_id: cartId,
+          delivery_address: `Address ${i}`,
+          phone: '+91-9876543210'
+        });
+      }
+
+      const input: GetUserOrdersInput = {
+        user_id: userId,
+        limit: 3,
+        offset: 1
+      };
+
+      const result = await getUserOrders(input);
+
+      expect(result).toHaveLength(3);
+    });
+  });
+
+  describe('getRestaurantOrders', () => {
+    it('should return orders for restaurant', async () => {
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
+      };
+
+      const createdOrder = await createOrder(input);
+
+      const restaurantInput: GetRestaurantOrdersInput = {
+        restaurant_id: restaurantId,
+        limit: 10,
+        offset: 0
+      };
+
+      const result = await getRestaurantOrders(restaurantInput);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(createdOrder.id);
+      expect(result[0].restaurant_id).toBe(restaurantId);
+      expect(typeof result[0].total_amount).toBe('number');
+    });
+
+    it('should filter orders by status', async () => {
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
+      };
+
+      const createdOrder = await createOrder(input);
+
+      // Update order status
+      await updateOrderStatus({
+        order_id: createdOrder.id,
+        status: 'accepted'
+      });
+
+      const restaurantInput: GetRestaurantOrdersInput = {
+        restaurant_id: restaurantId,
+        status: 'accepted',
+        limit: 10,
+        offset: 0
+      };
+
+      const result = await getRestaurantOrders(restaurantInput);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].status).toBe('accepted');
+    });
+
+    it('should return empty array when no orders match status filter', async () => {
+      const restaurantInput: GetRestaurantOrdersInput = {
+        restaurant_id: restaurantId,
+        status: 'delivered',
+        limit: 10,
+        offset: 0
+      };
+
+      const result = await getRestaurantOrders(restaurantInput);
 
       expect(result).toHaveLength(0);
     });
@@ -361,91 +422,89 @@ describe('orders handlers', () => {
 
   describe('updateOrderStatus', () => {
     it('should update order status', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
       };
 
-      const order = await createOrder(orderInput);
+      const createdOrder = await createOrder(input);
 
       const updateInput: UpdateOrderStatusInput = {
-        id: order.id,
-        status: 'confirmed',
-        estimated_delivery_time: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
+        order_id: createdOrder.id,
+        status: 'accepted'
       };
 
       const result = await updateOrderStatus(updateInput);
 
-      expect(result.id).toEqual(order.id);
-      expect(result.status).toEqual('confirmed');
-      expect(result.estimated_delivery_time).toBeInstanceOf(Date);
-      expect(typeof result.subtotal).toEqual('number');
+      expect(result).not.toBeNull();
+      expect(result!.status).toBe('accepted');
+      expect(result!.updated_at).toBeInstanceOf(Date);
+      expect(typeof result!.total_amount).toBe('number');
     });
 
-    it('should throw error for non-existent order', async () => {
+    it('should save status update to database', async () => {
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
+      };
+
+      const createdOrder = await createOrder(input);
+
       const updateInput: UpdateOrderStatusInput = {
-        id: 999,
-        status: 'confirmed'
+        order_id: createdOrder.id,
+        status: 'preparing'
       };
 
-      await expect(updateOrderStatus(updateInput)).rejects.toThrow(/Order not found/i);
+      await updateOrderStatus(updateInput);
+
+      const orders = await db.select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, createdOrder.id))
+        .execute();
+
+      expect(orders[0].status).toBe('preparing');
+    });
+
+    it('should return null for non-existent order', async () => {
+      const updateInput: UpdateOrderStatusInput = {
+        order_id: 99999,
+        status: 'accepted'
+      };
+
+      const result = await updateOrderStatus(updateInput);
+      expect(result).toBeNull();
     });
   });
 
-  describe('cancelOrder', () => {
-    it('should cancel an order', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
+  describe('getOrderItems', () => {
+    it('should return order items', async () => {
+      const input: CreateOrderInput = {
+        user_id: userId,
+        restaurant_id: restaurantId,
+        cart_id: cartId,
+        delivery_address: '456 Customer Street',
+        phone: '+91-9876543210'
       };
 
-      const order = await createOrder(orderInput);
-      const result = await cancelOrder(order.id);
-
-      expect(result.id).toEqual(order.id);
-      expect(result.status).toEqual('canceled');
-      expect(typeof result.subtotal).toEqual('number');
-    });
-
-    it('should throw error for non-existent order', async () => {
-      await expect(cancelOrder(999)).rejects.toThrow(/Order not found/i);
-    });
-  });
-
-  describe('getAllOrders', () => {
-    it('should return all orders', async () => {
-      await setupTestData();
-      await setupCartItems();
-
-      // Create multiple orders
-      const orderInput: CreateOrderInput = {
-        user_id: testUser.id,
-        restaurant_id: testRestaurant.id,
-        delivery_address_id: testAddress.id
-      };
-
-      await createOrder(orderInput);
-      await setupCartItems(); // Add cart items again
-      await createOrder(orderInput);
-
-      const result = await getAllOrders();
+      const createdOrder = await createOrder(input);
+      const result = await getOrderItems(createdOrder.id);
 
       expect(result).toHaveLength(2);
-      expect(result.every(order => typeof order.subtotal === 'number')).toBe(true);
-      expect(result.every(order => typeof order.total_amount === 'number')).toBe(true);
+      result.forEach(item => {
+        expect(item.order_id).toBe(createdOrder.id);
+        expect(typeof item.price_at_time).toBe('number');
+        expect(item.quantity).toBeGreaterThan(0);
+      });
     });
 
-    it('should return empty array when no orders exist', async () => {
-      const result = await getAllOrders();
-
+    it('should return empty array for order with no items', async () => {
+      const result = await getOrderItems(99999);
       expect(result).toHaveLength(0);
     });
   });

@@ -1,46 +1,19 @@
 import { db } from '../db';
 import { usersTable } from '../db/schema';
-import { type CreateUserInput, type LoginInput, type User } from '../schema';
+import { type CreateUserInput, type LoginUserInput, type User } from '../schema';
 import { eq } from 'drizzle-orm';
 
-// Simple password hashing using Bun's built-in crypto
-const hashPassword = async (password: string): Promise<string> => {
-  return await Bun.password.hash(password);
-};
-
-const verifyPassword = async (password: string, hashedPassword: string): Promise<boolean> => {
-  return await Bun.password.verify(password, hashedPassword);
-};
-
-// Simple JWT token generation (in production, use a proper JWT library)
-const generateToken = (userId: number): string => {
-  const payload = { userId, exp: Date.now() + (24 * 60 * 60 * 1000) }; // 24 hours
-  return Buffer.from(JSON.stringify(payload)).toString('base64');
-};
-
-export const registerUser = async (input: CreateUserInput): Promise<User> => {
+export async function registerUser(input: CreateUserInput): Promise<User> {
   try {
-    // Check if user already exists
-    const existingUser = await db.select()
-      .from(usersTable)
-      .where(eq(usersTable.email, input.email))
-      .limit(1)
-      .execute();
+    // Hash the password using Bun's built-in hashing
+    const passwordHash = await Bun.password.hash(input.password);
 
-    if (existingUser.length > 0) {
-      throw new Error('User with this email already exists');
-    }
-
-    // Hash the password
-    const passwordHash = await hashPassword(input.password);
-
-    // Insert new user
+    // Insert user record
     const result = await db.insert(usersTable)
       .values({
         email: input.email,
         password_hash: passwordHash,
-        first_name: input.first_name,
-        last_name: input.last_name,
+        name: input.name,
         phone: input.phone,
         role: input.role
       })
@@ -48,97 +21,55 @@ export const registerUser = async (input: CreateUserInput): Promise<User> => {
       .execute();
 
     const user = result[0];
-    
-    // Return user without password hash
-    return {
-      id: user.id,
-      email: user.email,
-      password_hash: user.password_hash, // Required by schema but shouldn't be exposed
-      first_name: user.first_name,
-      last_name: user.last_name,
-      phone: user.phone,
-      role: user.role,
-      created_at: user.created_at,
-      updated_at: user.updated_at
-    };
+    return user;
   } catch (error) {
     console.error('User registration failed:', error);
     throw error;
   }
-};
+}
 
-export const loginUser = async (input: LoginInput): Promise<{ user: User; token: string }> => {
+export async function loginUser(input: LoginUserInput): Promise<User | null> {
   try {
     // Find user by email
     const users = await db.select()
       .from(usersTable)
       .where(eq(usersTable.email, input.email))
-      .limit(1)
       .execute();
 
     if (users.length === 0) {
-      throw new Error('Invalid email or password');
+      return null;
     }
 
     const user = users[0];
 
-    // Verify password
-    const isValidPassword = await verifyPassword(input.password, user.password_hash);
-    if (!isValidPassword) {
-      throw new Error('Invalid email or password');
+    // Verify password using Bun's built-in verification
+    const isPasswordValid = await Bun.password.verify(input.password, user.password_hash);
+
+    if (!isPasswordValid) {
+      return null;
     }
 
-    // Generate token
-    const token = generateToken(user.id);
-
-    return {
-      user: {
-        id: user.id,
-        email: user.email,
-        password_hash: user.password_hash, // Required by schema but shouldn't be exposed
-        first_name: user.first_name,
-        last_name: user.last_name,
-        phone: user.phone,
-        role: user.role,
-        created_at: user.created_at,
-        updated_at: user.updated_at
-      },
-      token
-    };
+    return user;
   } catch (error) {
     console.error('User login failed:', error);
     throw error;
   }
-};
+}
 
-export const getCurrentUser = async (userId: number): Promise<User> => {
+export async function getUserById(userId: number): Promise<User | null> {
   try {
-    // Find user by ID
     const users = await db.select()
       .from(usersTable)
       .where(eq(usersTable.id, userId))
-      .limit(1)
       .execute();
 
     if (users.length === 0) {
-      throw new Error('User not found');
+      return null;
     }
 
-    const user = users[0];
-    
-    return {
-      id: user.id,
-      email: user.email,
-      password_hash: user.password_hash, // Required by schema but shouldn't be exposed
-      first_name: user.first_name,
-      last_name: user.last_name,
-      phone: user.phone,
-      role: user.role,
-      created_at: user.created_at,
-      updated_at: user.updated_at
-    };
+    return users[0];
   } catch (error) {
-    console.error('Get current user failed:', error);
+    console.error('Get user by ID failed:', error);
     throw error;
   }
-};
+}
